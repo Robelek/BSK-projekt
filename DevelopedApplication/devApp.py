@@ -1,5 +1,6 @@
 import os
 import tkinter as tk
+import psutil
 from tkinter import filedialog, messagebox
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import serialization, hashes
@@ -28,7 +29,27 @@ class PAdESApp:
         self.statusLabel = tk.Label(app, text="Status: Waiting", fg="blue")
         self.statusLabel.pack(pady=10)
 
+        self. statusPendrive = tk.Label(app, text="Pendrive status: Pendrive not found", fg="red")
+        self.statusPendrive.pack(pady=10)
+        self.drive = self.findKeyFile()
+
         self.pdfPath = None
+        self.previousDrives = set(self.getDrives())
+        self.checkDrivesPeriodically()
+
+
+    def getDrives(self):
+        return [part.mountpoint for part in psutil.disk_partitions() if "removable" in part.opts]
+
+
+    def checkDrivesPeriodically(self):
+        currentDrives = set(self.getDrives())
+        if currentDrives != self.previousDrives:
+            self.drive = self.findKeyFile()
+            self.previousDrives = currentDrives
+        
+        self.app.after(2000, self.checkDrivesPeriodically)
+
 
 
     def selectPdf(self):
@@ -41,8 +62,12 @@ class PAdESApp:
 
     def signPdf(self):
         
+        self.drive = self.findKeyFile()
+        if not self.drive:
+            messagebox.showerror("Error", "Pendrive not found")
+            return None
+
         pin = self.getPin()
-        
         if not pin:
             return
         
@@ -75,15 +100,8 @@ class PAdESApp:
 
     def getPrivateKey(self, pin):
 
-        # Windows
-        if os.name == "nt":
-            drive = "E:"
-        # Linux
-        else:
-            drive = "/media/username/PENDRIVE_NAME" # ??? don't know how to get filepath of mounted pendrive on Linux
-
         try:
-            with open(f"{drive}/encryptedPrivateKey.key", "rb") as file:
+            with open(f"{self.drive}/encryptedPrivateKey.key", "rb") as file:
                 iv = file.read(16)
                 encryptedPrivateKey = file.read()
 
@@ -104,6 +122,19 @@ class PAdESApp:
             messagebox.showerror("Error", "Private key not found on the pendrive")
             return None
 
+
+    def findKeyFile(self):
+
+        for part in psutil.disk_partitions():
+            if "removable" in part.opts:
+                drive = part.mountpoint
+                for root, dirs, files in os.walk(drive):
+                    if any(file.endswith(".key") for file in files):
+                        self.statusPendrive.config(text=f"Pendrive status: Pendrive found", fg="green")
+                        return drive
+                    
+        self.statusPendrive.config(text=f"Pendrive status: Pendrive not found", fg="red")
+        return None
 
     def verifySignature(self):
         publicKey = self.getPublicKey()
